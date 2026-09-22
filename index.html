@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcriptor de Voz | UI Design</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+
+        /* Animación de pulso suave para el estado activo del micrófono */
+        @keyframes soft-pulse {
+            0% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.3); opacity: 0; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+
+        .mic-active .ripple-1 {
+            animation: soft-pulse 2s infinite cubic-bezier(0.0, 0, 0.2, 1);
+        }
+        
+        .mic-active .ripple-2 {
+            animation: soft-pulse 2s infinite cubic-bezier(0.0, 0, 0.2, 1);
+            animation-delay: 1s;
+        }
+
+        /* Estilización sutil del scrollbar para el área de texto */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-300">
+
+    <main class="w-full max-w-4xl flex flex-col items-center gap-8">
+        
+        <!-- Encabezado -->
+        <header class="text-center space-y-2">
+            <h1 class="text-4xl font-semibold tracking-tight text-slate-900">Transcriptor en tiempo real</h1>
+            <p class="text-slate-500 text-lg">Toca el micrófono y comienza a hablar</p>
+        </header>
+
+        <!-- Controles de Grabación -->
+        <div class="relative flex items-center justify-center h-32 w-32">
+            <!-- Anillos de animación (visibles solo cuando está activo) -->
+            <div class="ripple-1 absolute w-20 h-20 bg-blue-400 rounded-full opacity-0 pointer-events-none transition-all duration-300"></div>
+            <div class="ripple-2 absolute w-20 h-20 bg-blue-400 rounded-full opacity-0 pointer-events-none transition-all duration-300"></div>
+            
+            <!-- Botón de Micrófono -->
+            <button id="micBtn" class="relative z-10 w-20 h-20 flex items-center justify-center bg-white rounded-full shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 border border-slate-100 group">
+                <svg id="micIcon" xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-blue-600 transition-colors duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- Área de Transcripción -->
+        <div class="w-full bg-white rounded-3xl shadow-sm border border-slate-200 p-8 min-h-[300px] flex flex-col relative transition-shadow duration-300 hover:shadow-md">
+            
+            <!-- Indicador de estado -->
+            <div class="flex items-center gap-2 mb-4">
+                <span id="statusIndicator" class="w-2.5 h-2.5 rounded-full bg-slate-300 transition-colors duration-300"></span>
+                <span id="statusText" class="text-sm font-medium text-slate-500 transition-colors duration-300">Inactivo</span>
+            </div>
+
+            <!-- Contenedor de Texto -->
+            <div id="transcriptContainer" class="flex-1 overflow-y-auto">
+                <p class="text-2xl leading-relaxed text-slate-800">
+                    <span id="finalText" class="transition-opacity duration-200"></span>
+                    <span id="interimText" class="text-slate-400 italic"></span>
+                </p>
+                <div id="placeholder" class="text-2xl text-slate-300 leading-relaxed select-none">
+                    Tus palabras aparecerán aquí...
+                </div>
+            </div>
+
+            <!-- Controles secundarios -->
+            <div class="absolute bottom-6 right-8 flex gap-4">
+                <button id="clearBtn" class="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors opacity-0 pointer-events-none">
+                    Limpiar texto
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Referencias del DOM
+            const micBtn = document.getElementById('micBtn');
+            const micIcon = document.getElementById('micIcon');
+            const micContainer = micBtn.parentElement;
+            const finalTextEl = document.getElementById('finalText');
+            const interimTextEl = document.getElementById('interimText');
+            const placeholder = document.getElementById('placeholder');
+            const statusIndicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            const clearBtn = document.getElementById('clearBtn');
+            const transcriptContainer = document.getElementById('transcriptContainer');
+
+            // Variables de estado
+            let isRecording = false;
+            let finalTranscript = '';
+
+            // Comprobar soporte de la API
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                placeholder.textContent = "Tu navegador no soporta la Web Speech API. Por favor, intenta usar Google Chrome.";
+                placeholder.classList.add('text-red-400');
+                micBtn.disabled = true;
+                micBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                return;
+            }
+
+            // Configurar el reconocimiento
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true; // Sigue escuchando aunque haya pausas
+            recognition.interimResults = true; // Muestra resultados mientras se habla
+            recognition.lang = 'es-ES'; // Idioma español
+
+            // Eventos de la API
+            recognition.onstart = () => {
+                isRecording = true;
+                updateUIState();
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+
+                // Iterar sobre los resultados
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript + ' ';
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                // Actualizar la interfaz
+                finalTextEl.innerHTML = finalTranscript;
+                interimTextEl.innerHTML = interimTranscript;
+
+                // Ocultar placeholder si hay texto
+                if (finalTranscript || interimTranscript) {
+                    placeholder.classList.add('hidden');
+                    clearBtn.classList.remove('opacity-0', 'pointer-events-none');
+                }
+
+                // Auto-scroll hacia abajo
+                transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Error de reconocimiento:', event.error);
+                isRecording = false;
+                updateUIState();
+                
+                if (event.error === 'not-allowed') {
+                    alert('Por favor, permite el acceso al micrófono para usar esta función.');
+                }
+            };
+
+            recognition.onend = () => {
+                // Si el usuario no detuvo manualmente, podría haberse desconectado por silencio.
+                // En una app más robusta, se puede reiniciar automáticamente aquí si isRecording es true.
+                isRecording = false;
+                updateUIState();
+            };
+
+            // Función para actualizar la interfaz visual según el estado
+            function updateUIState() {
+                if (isRecording) {
+                    micContainer.classList.add('mic-active');
+                    micIcon.classList.replace('text-blue-600', 'text-red-500');
+                    statusIndicator.classList.replace('bg-slate-300', 'bg-red-500');
+                    statusIndicator.classList.add('animate-pulse');
+                    statusText.textContent = 'Escuchando...';
+                    statusText.classList.replace('text-slate-500', 'text-red-500');
+                } else {
+                    micContainer.classList.remove('mic-active');
+                    micIcon.classList.replace('text-red-500', 'text-blue-600');
+                    statusIndicator.classList.replace('bg-red-500', 'bg-slate-300');
+                    statusIndicator.classList.remove('animate-pulse');
+                    statusText.textContent = 'Inactivo';
+                    statusText.classList.replace('text-red-500', 'text-slate-500');
+                }
+            }
+
+            // Event Listener para el botón principal
+            micBtn.addEventListener('click', () => {
+                if (isRecording) {
+                    recognition.stop();
+                } else {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        // Evitar error si se intenta iniciar cuando ya está iniciado internamente
+                        console.log('El reconocimiento ya estaba iniciado', e);
+                    }
+                }
+            });
+
+            // Event Listener para limpiar el texto
+            clearBtn.addEventListener('click', () => {
+                finalTranscript = '';
+                finalTextEl.innerHTML = '';
+                interimTextEl.innerHTML = '';
+                placeholder.classList.remove('hidden');
+                clearBtn.classList.add('opacity-0', 'pointer-events-none');
+            });
+        });
+    </script>
+</body>
+</html>
